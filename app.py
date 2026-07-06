@@ -331,6 +331,7 @@ with tab1:
 # ── TAB 2: BULK UPLOAD ──
 with tab2:
     st.markdown("### Bulk Customer Analysis")
+    st.info("🔒 **Privacy notice:** Bulk upload results are session-only and never saved to the database. Data clears when you close the browser. For persistent records, use Single Analysis.")
 
     template_data = {
         "Customer Name": ["John Smith", "Jane Doe"],
@@ -398,24 +399,6 @@ with tab2:
                     "Renewal Date": renewal_str,
                     "Risk Level": risk,
                     "Full Analysis": result
-                })
-
-                save_to_db({
-                    "customer_name": name,
-                    "policy_number": str(row.get("Policy Number", "N/A")) if pd.notna(row.get("Policy Number")) else "N/A",
-                    "carrier": row.get("Carrier", "N/A"),
-                    "policy_type": row.get("Policy Type", "N/A"),
-                    "policy_duration": row.get("Policy Duration (yrs)", 0),
-                    "renewal_date": renewal_str,
-                    "premium_change": row.get("Premium Change", "N/A"),
-                    "premium_reason": row.get("Premium Change Reason", "N/A"),
-                    "at_fault_claims": row.get("At-Fault Claims (3yr)", 0),
-                    "bundle_status": row.get("Bundle Status", "N/A"),
-                    "payment_record": row.get("Payment Record", "N/A"),
-                    "last_contact": row.get("Last Contact", "N/A"),
-                    "notes": str(row.get("Notes", "N/A")),
-                    "risk_level": risk,
-                    "full_analysis": result
                 })
 
                 progress.progress((i + 1) / len(df))
