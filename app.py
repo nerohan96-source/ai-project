@@ -334,6 +334,8 @@ with tab2:
 
     template_data = {
         "Customer Name": ["John Smith", "Jane Doe"],
+        "Policy Number": ["POL-001234", "POL-005678"],
+        "Carrier": ["State Farm", "Allstate"],
         "Policy Type": ["Auto", "Home"],
         "Policy Duration (yrs)": [2.5, 5.0],
         "Renewal Date": ["2025-08-15", "2025-09-01"],
@@ -400,7 +402,7 @@ with tab2:
 
                 save_to_db({
                     "customer_name": name,
-                    "policy_number": "N/A",
+                    "policy_number": str(row.get("Policy Number", "N/A")) if pd.notna(row.get("Policy Number")) else "N/A",
                     "carrier": row.get("Carrier", "N/A"),
                     "policy_type": row.get("Policy Type", "N/A"),
                     "policy_duration": row.get("Policy Duration (yrs)", 0),
