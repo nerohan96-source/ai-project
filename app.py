@@ -5,6 +5,8 @@ import pandas as pd
 import io
 import sqlite3
 from datetime import datetime
+import plotly.express as px
+import plotly.graph_objects as go
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
@@ -141,7 +143,7 @@ st.markdown("**AI-powered customer retention intelligence for insurance agents**
 st.divider()
 
 # ── TABS ──
-tab1, tab2, tab3 = st.tabs(["Single Analysis", "Bulk Upload (Excel)", "History & Records"])
+tab1, tab2, tab3, tab4 = st.tabs(["Single Analysis", "Bulk Upload (Excel)", "History & Records", "Dashboard"])
 
 def analyze_customer(customer_info):
     prompt = f"""You are an insurance industry expert with 7+ years of experience analyzing customer churn risk.
@@ -441,6 +443,97 @@ with tab3:
         filtered.to_excel(buf, index=False)
         buf.seek(0)
         st.download_button("⬇️ Export All to Excel", data=buf, file_name="churnshield_history.xlsx", mime="application/vnd.ms-excel")
+
+# ── TAB 4: DASHBOARD ──
+with tab4:
+    st.markdown("### Dashboard")
+
+    dash_df = load_all()
+
+    if dash_df.empty:
+        st.info("No data yet. Analyze some customers to see the dashboard.")
+    else:
+        # Top metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Analyzed", len(dash_df))
+        with col2:
+            high_pct = round(len(dash_df[dash_df["risk_level"] == "HIGH"]) / len(dash_df) * 100)
+            st.metric("High Risk %", f"{high_pct}%")
+        with col3:
+            bundle_only = dash_df[dash_df["bundle_status"] == "Auto Only"]
+            st.metric("No Bundle", len(bundle_only))
+        with col4:
+            late = dash_df[dash_df["payment_record"] != "Always On Time"]
+            st.metric("Late Payments", len(late))
+
+        st.divider()
+
+        col_l, col_r = st.columns(2)
+
+        # Risk distribution pie
+        with col_l:
+            st.markdown("#### Risk Level Distribution")
+            risk_counts = dash_df["risk_level"].value_counts().reset_index()
+            risk_counts.columns = ["Risk Level", "Count"]
+            color_map = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#22c55e"}
+            fig_pie = px.pie(
+                risk_counts, names="Risk Level", values="Count",
+                color="Risk Level", color_discrete_map=color_map,
+                hole=0.4
+            )
+            fig_pie.update_layout(margin=dict(t=20, b=20), height=320)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # Risk by policy type bar
+        with col_r:
+            st.markdown("#### Risk by Policy Type")
+            policy_risk = dash_df.groupby(["policy_type", "risk_level"]).size().reset_index(name="count")
+            fig_bar = px.bar(
+                policy_risk, x="policy_type", y="count", color="risk_level",
+                color_discrete_map=color_map, barmode="stack",
+                labels={"policy_type": "Policy Type", "count": "Customers", "risk_level": "Risk"}
+            )
+            fig_bar.update_layout(margin=dict(t=20, b=20), height=320)
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        col_l2, col_r2 = st.columns(2)
+
+        # Premium change breakdown
+        with col_l2:
+            st.markdown("#### Premium Change vs Risk")
+            prem_risk = dash_df.groupby(["premium_change", "risk_level"]).size().reset_index(name="count")
+            fig_prem = px.bar(
+                prem_risk, x="premium_change", y="count", color="risk_level",
+                color_discrete_map=color_map, barmode="group",
+                labels={"premium_change": "Premium Change", "count": "Customers", "risk_level": "Risk"}
+            )
+            fig_prem.update_layout(margin=dict(t=20, b=20), height=320, xaxis_tickangle=-30)
+            st.plotly_chart(fig_prem, use_container_width=True)
+
+        # Carrier breakdown
+        with col_r2:
+            st.markdown("#### Customers by Carrier")
+            carrier_counts = dash_df["carrier"].value_counts().reset_index()
+            carrier_counts.columns = ["Carrier", "Count"]
+            fig_carrier = px.bar(
+                carrier_counts, x="Count", y="Carrier", orientation="h",
+                color="Count", color_continuous_scale="Blues"
+            )
+            fig_carrier.update_layout(margin=dict(t=20, b=20), height=320, showlegend=False)
+            st.plotly_chart(fig_carrier, use_container_width=True)
+
+        # Timeline
+        st.markdown("#### Analysis Timeline")
+        dash_df["date"] = pd.to_datetime(dash_df["analyzed_at"]).dt.date
+        timeline = dash_df.groupby(["date", "risk_level"]).size().reset_index(name="count")
+        fig_time = px.line(
+            timeline, x="date", y="count", color="risk_level",
+            color_discrete_map=color_map,
+            labels={"date": "Date", "count": "Customers Analyzed", "risk_level": "Risk"}
+        )
+        fig_time.update_layout(margin=dict(t=20, b=20), height=280)
+        st.plotly_chart(fig_time, use_container_width=True)
 
 st.divider()
 st.caption("ChurnShield · Built by Nero Han · Powered by Claude AI · github.com/nerohan96-source/ai-project")
