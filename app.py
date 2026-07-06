@@ -43,6 +43,33 @@ def init_db():
 
 def save_to_db(data):
     conn = sqlite3.connect("churnshield.db")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    policy_num = data["policy_number"]
+
+    # If policy number exists, update instead of insert
+    if policy_num and policy_num != "N/A":
+        existing = conn.execute(
+            "SELECT id FROM customers WHERE policy_number = ?", (policy_num,)
+        ).fetchone()
+        if existing:
+            conn.execute("""
+                UPDATE customers SET
+                    analyzed_at=?, customer_name=?, carrier=?, policy_type=?,
+                    policy_duration=?, renewal_date=?, premium_change=?, premium_reason=?,
+                    at_fault_claims=?, bundle_status=?, payment_record=?, last_contact=?,
+                    notes=?, risk_level=?, full_analysis=?
+                WHERE policy_number=?
+            """, (
+                now, data["customer_name"], data["carrier"], data["policy_type"],
+                data["policy_duration"], data.get("renewal_date", ""),
+                data["premium_change"], data["premium_reason"], data["at_fault_claims"],
+                data["bundle_status"], data["payment_record"], data["last_contact"],
+                data["notes"], data["risk_level"], data["full_analysis"], policy_num
+            ))
+            conn.commit()
+            conn.close()
+            return "updated"
+
     conn.execute("""
         INSERT INTO customers (
             analyzed_at, customer_name, policy_number, carrier, policy_type,
@@ -50,8 +77,7 @@ def save_to_db(data):
             bundle_status, payment_record, last_contact, notes, risk_level, full_analysis
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        datetime.now().strftime("%Y-%m-%d %H:%M"),
-        data["customer_name"], data["policy_number"], data["carrier"],
+        now, data["customer_name"], policy_num, data["carrier"],
         data["policy_type"], data["policy_duration"], data.get("renewal_date", ""),
         data["premium_change"], data["premium_reason"], data["at_fault_claims"],
         data["bundle_status"], data["payment_record"], data["last_contact"],
@@ -59,6 +85,7 @@ def save_to_db(data):
     ))
     conn.commit()
     conn.close()
+    return "inserted"
 
 def load_all():
     conn = sqlite3.connect("churnshield.db")
@@ -278,7 +305,7 @@ with tab1:
 
         st.markdown(f'<div class="result-box">{result}</div>', unsafe_allow_html=True)
 
-        save_to_db({
+        action = save_to_db({
             "customer_name": customer_name or "Customer",
             "policy_number": policy_number or "N/A",
             "carrier": carrier,
@@ -295,8 +322,10 @@ with tab1:
             "risk_level": risk_level,
             "full_analysis": result
         })
-
-        st.success("Saved to database.")
+        if action == "updated":
+            st.info("Record updated (existing policy number found).")
+        else:
+            st.success("New customer saved to database.")
         st.caption("Analysis powered by Claude AI · ChurnShield by Nero Han")
 
 # ── TAB 2: BULK UPLOAD ──
