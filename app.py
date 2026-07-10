@@ -6,6 +6,8 @@ import io
 import sqlite3
 from datetime import datetime, date, timedelta
 import plotly.express as px
+import pypdf
+import re
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
@@ -100,6 +102,35 @@ def delete_record(record_id):
     conn.close()
 
 init_db()
+
+# ── RAG HELPERS ──
+def extract_text_from_pdf(file) -> str:
+    reader = pypdf.PdfReader(file)
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+def chunk_text(text: str, chunk_size: int = 400) -> list[str]:
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size):
+        chunk = " ".join(words[i:i + chunk_size])
+        if chunk.strip():
+            chunks.append(chunk)
+    return chunks
+
+def find_relevant_chunks(chunks: list[str], query: str, top_n: int = 3) -> list[str]:
+    query_words = set(re.findall(r'\w+', query.lower()))
+    scored = []
+    for chunk in chunks:
+        chunk_words = set(re.findall(r'\w+', chunk.lower()))
+        score = len(query_words & chunk_words)
+        scored.append((score, chunk))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:top_n] if _ > 0]
+
+if "policy_chunks" not in st.session_state:
+    st.session_state.policy_chunks = []
+if "policy_doc_names" not in st.session_state:
+    st.session_state.policy_doc_names = []
 
 st.set_page_config(
     page_title="ChurnShield · Insurance Risk AI",
@@ -196,9 +227,16 @@ st.markdown("# 🛡️ ChurnShield")
 st.markdown("**AI-powered customer retention intelligence for insurance agents**")
 st.divider()
 
-tab1, tab2, tab3, tab4 = st.tabs(["Single Analysis", "Bulk Upload (Excel)", "History & Records", "Dashboard"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Single Analysis", "Bulk Upload (Excel)", "History & Records", "Dashboard", "Policy Docs"])
 
-def analyze_customer(customer_info):
+def analyze_customer(customer_info, policy_context: str = ""):
+    context_block = f"""
+Company Policy Reference:
+{policy_context}
+
+Use the above policy documents to inform your risk assessment where relevant. Cite specific policy rules if applicable.
+""" if policy_context else ""
+
     prompt = f"""You are an insurance industry expert with 7+ years of experience analyzing customer churn risk.
 
 Based on the following customer profile, provide:
@@ -207,7 +245,7 @@ Based on the following customer profile, provide:
 3. FOLLOW-UP ACTION: Specific action and talking points
 4. AUTO-REMINDER: Yes/No + timing
 5. BUNDLE OPPORTUNITY: Yes/No + products + estimated savings %
-
+{context_block}
 Customer Profile:
 {customer_info}
 
@@ -281,8 +319,18 @@ with tab1:
 - Last Contact: {last_contact}
 - Notes: {notes or "N/A"}
 """
+        # RAG: find relevant policy chunks
+        policy_context = ""
+        if st.session_state.policy_chunks:
+            relevant = find_relevant_chunks(st.session_state.policy_chunks, customer_info)
+            if relevant:
+                policy_context = "\n\n---\n".join(relevant)
+
         with st.spinner("Running AI analysis..."):
-            result = analyze_customer(customer_info)
+            result = analyze_customer(customer_info, policy_context)
+
+        if policy_context:
+            st.caption(f"📄 Analysis informed by {len(st.session_state.policy_doc_names)} policy document(s): {', '.join(st.session_state.policy_doc_names)}")
 
         risk_level = get_risk_level(result)
         risk_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}
@@ -626,6 +674,45 @@ with tab4:
                                    labels={"renewal_month": "Month", "count": "Renewals", "risk_level": "Risk"})
                 fig_renew.update_layout(margin=dict(t=20, b=20), height=280)
                 st.plotly_chart(fig_renew, use_container_width=True)
+
+# ── TAB 5: POLICY DOCS ──
+with tab5:
+    st.markdown("### Policy Documents (RAG)")
+    st.markdown("Upload your agency's policy documents — underwriting rules, product guidelines, claims procedures. The AI will reference these when analyzing customers.")
+    st.info("🔒 Documents are session-only and never stored. They clear when you close the browser.")
+
+    uploaded_docs = st.file_uploader(
+        "Upload PDF or TXT files",
+        type=["pdf", "txt"],
+        accept_multiple_files=True
+    )
+
+    if uploaded_docs:
+        if st.button("📥 Load Documents into AI", use_container_width=True):
+            st.session_state.policy_chunks = []
+            st.session_state.policy_doc_names = []
+            with st.spinner("Processing documents..."):
+                for doc in uploaded_docs:
+                    if doc.name.endswith(".pdf"):
+                        text = extract_text_from_pdf(doc)
+                    else:
+                        text = doc.read().decode("utf-8", errors="ignore")
+                    chunks = chunk_text(text)
+                    st.session_state.policy_chunks.extend(chunks)
+                    st.session_state.policy_doc_names.append(doc.name)
+            st.success(f"✅ Loaded {len(st.session_state.policy_doc_names)} document(s) — {len(st.session_state.policy_chunks)} chunks indexed. Go to Single Analysis to use them.")
+
+    if st.session_state.policy_doc_names:
+        st.divider()
+        st.markdown(f"**Currently loaded ({len(st.session_state.policy_doc_names)} docs, {len(st.session_state.policy_chunks)} chunks):**")
+        for name in st.session_state.policy_doc_names:
+            st.markdown(f"- 📄 {name}")
+        if st.button("🗑️ Clear Documents", use_container_width=True):
+            st.session_state.policy_chunks = []
+            st.session_state.policy_doc_names = []
+            st.rerun()
+    else:
+        st.markdown("*No documents loaded yet.*")
 
 st.divider()
 st.caption("ChurnShield · Built by Nero Han · Powered by Claude AI · github.com/nerohan96-source/ai-project")
