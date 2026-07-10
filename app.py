@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 import plotly.express as px
 import pypdf
 import re
+import json
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
@@ -239,12 +240,26 @@ Use the above policy documents to inform your risk assessment where relevant. Ci
 
     prompt = f"""You are an insurance industry expert with 7+ years of experience analyzing customer churn risk.
 
-Based on the following customer profile, provide:
-1. RISK LEVEL: HIGH / MEDIUM / LOW
-2. RISK FACTORS: 2-3 bullet points
+Based on the following customer profile, respond in two parts:
+
+PART 1 — Output a JSON block exactly like this (no extra text before or after the JSON):
+```json
+{{
+  "risk_level": "HIGH",
+  "risk_factors": [
+    {{"signal": "Premium increased 40%", "threshold": "Above 25% = high risk"}},
+    {{"signal": "2 at-fault claims in 3 years", "threshold": "2+ claims = high risk"}},
+    {{"signal": "No contact in 6+ months", "threshold": "6+ months = urgent"}}
+  ],
+  "bundle_opportunity": true,
+  "auto_reminder": "3 days before renewal"
+}}
+```
+
+PART 2 — Then provide the full analysis:
 3. FOLLOW-UP ACTION: Specific action and talking points
-4. AUTO-REMINDER: Yes/No + timing
-5. BUNDLE OPPORTUNITY: Yes/No + products + estimated savings %
+4. BUNDLE OPPORTUNITY: Products to suggest + estimated savings %
+5. ADDITIONAL NOTES
 {context_block}
 Customer Profile:
 {customer_info}
@@ -258,11 +273,28 @@ Be direct, specific, and actionable.
     )
     return message.content[0].text
 
+def parse_risk_factors(result: str):
+    try:
+        match = re.search(r'```json\s*(.*?)\s*```', result, re.DOTALL)
+        if match:
+            data = json.loads(match.group(1))
+            return data
+    except Exception:
+        pass
+    return None
+
 def get_risk_level(result):
+    parsed = parse_risk_factors(result)
+    if parsed and "risk_level" in parsed:
+        return parsed["risk_level"]
     for level in ["HIGH", "MEDIUM", "LOW"]:
         if level in result:
             return level
     return "MEDIUM"
+
+def get_analysis_text(result: str) -> str:
+    # Remove the JSON block, return only the narrative part
+    return re.sub(r'```json.*?```', '', result, flags=re.DOTALL).strip()
 
 # ── TAB 1: SINGLE ──
 with tab1:
@@ -351,7 +383,25 @@ with tab1:
         with col_d:
             st.metric("Renewal", renewal_str if renewal_str else "N/A")
 
-        st.markdown(f'<div class="result-box">{result}</div>', unsafe_allow_html=True)
+        # Structured risk factors
+        parsed = parse_risk_factors(result)
+        if parsed and "risk_factors" in parsed:
+            st.markdown("#### Why this risk level?")
+            color = {"HIGH": "#fee2e2", "MEDIUM": "#fef3c7", "LOW": "#dcfce7"}.get(risk_level, "#f0f6ff")
+            border = {"HIGH": "#ef4444", "MEDIUM": "#f59e0b", "LOW": "#22c55e"}.get(risk_level, "#bfdbfe")
+            for factor in parsed["risk_factors"]:
+                st.markdown(
+                    f'<div style="background:{color};border-left:4px solid {border};'
+                    f'border-radius:6px;padding:10px 14px;margin-bottom:6px;">'
+                    f'<b>{factor["signal"]}</b><br>'
+                    f'<span style="font-size:0.82rem;color:#64748b;">Threshold: {factor["threshold"]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+            st.divider()
+
+        analysis_text = get_analysis_text(result)
+        st.markdown(f'<div class="result-box">{analysis_text}</div>', unsafe_allow_html=True)
 
         action = save_to_db({
             "customer_name": customer_name or "Customer",
